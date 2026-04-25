@@ -19766,6 +19766,157 @@ async def client_attention(user: User = Depends(get_current_user)):
     }
 
 
+# ============================================================================
+# PRODUCTIZATION & PRICING LAYER v1
+# ----------------------------------------------------------------------------
+# Three tiers + Owner Summary card. Subscription is mocked (no Stripe yet) —
+# stores chosen plan on the user record. Catalog is fixed; module-payments
+# (the existing per-module billing) keep working untouched.
+# ============================================================================
+
+PRICING_PLANS = [
+    {
+        "slug": "starter",
+        "name": "Starter",
+        "price_monthly": 299,
+        "tagline": "1 product, fully managed",
+        "features": [
+            "1 active project",
+            "Operator enabled (auto-pause / rebalance)",
+            "Standard module catalog",
+            "Email & in-app updates",
+        ],
+    },
+    {
+        "slug": "growth",
+        "name": "Growth",
+        "price_monthly": 799,
+        "tagline": "2–3 products, priority execution",
+        "highlighted": True,
+        "features": [
+            "Up to 3 active projects",
+            "Priority module pickup (faster delivery)",
+            "Full module catalog + early add-ons",
+            "Dedicated decision queue",
+        ],
+    },
+    {
+        "slug": "scale",
+        "name": "Scale",
+        "price_monthly": 1499,
+        "tagline": "Unlimited modules, dedicated operator",
+        "features": [
+            "Unlimited active projects",
+            "Dedicated operator logic & faster auto-actions",
+            "Senior developer routing",
+            "Quarterly product strategy review",
+        ],
+    },
+]
+
+
+@api_router.get("/billing/plans")
+async def billing_plans(user: User = Depends(get_current_user)):
+    """Three fixed tiers — no DB lookup, no admin-tunable pricing yet."""
+    return {"plans": PRICING_PLANS}
+
+
+@api_router.get("/client/subscription")
+async def client_subscription(user: User = Depends(get_current_user)):
+    """Current plan (or 'none'). Lives on the user record so it survives."""
+    u = await db.users.find_one(
+        {"user_id": user.user_id},
+        {"_id": 0, "subscription_plan": 1, "subscription_started_at": 1},
+    ) or {}
+    slug = u.get("subscription_plan") or "none"
+    plan = next((p for p in PRICING_PLANS if p["slug"] == slug), None)
+    return {
+        "slug": slug,
+        "plan": plan,
+        "started_at": u.get("subscription_started_at"),
+    }
+
+
+class SubscribeRequest(BaseModel):
+    slug: str  # "starter" | "growth" | "scale" | "none"
+
+
+@api_router.post("/client/subscribe")
+async def client_subscribe(
+    body: SubscribeRequest,
+    user: User = Depends(get_current_user),
+):
+    """Mocked subscribe — flips a flag on the user. Real Stripe checkout
+    would replace this once a key is provided."""
+    if body.slug != "none" and not any(p["slug"] == body.slug for p in PRICING_PLANS):
+        raise HTTPException(status_code=400, detail="Unknown plan")
+    now_iso = datetime.now(timezone.utc).isoformat()
+    update: Dict[str, Any] = {"subscription_plan": body.slug}
+    if body.slug != "none":
+        update["subscription_started_at"] = now_iso
+    await db.users.update_one({"user_id": user.user_id}, {"$set": update})
+    plan = next((p for p in PRICING_PLANS if p["slug"] == body.slug), None)
+    return {"ok": True, "slug": body.slug, "plan": plan, "at": now_iso}
+
+
+@api_router.get("/client/owner-summary")
+async def owner_summary(user: User = Depends(get_current_user)):
+    """Single card on Home that frames the user as 'Owner', not 'Client'.
+
+    Numbers are direct projections of existing collections — no derivation:
+      • products_count      — projects this user owns
+      • invested            — sum of paid invoices
+      • added_this_month    — sum of expansion-module prices this calendar month
+      • system_active       — at least one auto_action emitted in last 14d
+    """
+    pids = [p["project_id"] async for p in db.projects.find(
+        {"client_id": user.user_id}, {"_id": 0, "project_id": 1}
+    )]
+
+    products_count = len(pids)
+
+    invested_agg = db.invoices.aggregate([
+        {"$match": {"client_id": user.user_id, "status": "paid"}},
+        {"$group": {"_id": None, "sum": {"$sum": "$amount"}}},
+    ])
+    invested = 0.0
+    async for row in invested_agg:
+        invested = float(row.get("sum") or 0)
+
+    # Added this month — every expansion module added since 1st of current month.
+    now = datetime.now(timezone.utc)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+    added_agg = db.modules.aggregate([
+        {"$match": {
+            "project_id": {"$in": pids},
+            "source": "expansion",
+            "added_at": {"$gte": month_start},
+        }},
+        {"$group": {"_id": None, "sum": {"$sum": "$price"}}},
+    ])
+    added_this_month = 0.0
+    async for row in added_agg:
+        added_this_month = float(row.get("sum") or 0)
+
+    # System active = recent auto_action on any of the user's projects.
+    cutoff = (now - timedelta(days=14)).isoformat()
+    sys_count = 0
+    if pids:
+        sys_count = await db.auto_actions.count_documents({
+            "project_id": {"$in": pids},
+            "created_at": {"$gte": cutoff},
+        })
+
+    return {
+        "products_count": products_count,
+        "invested": round(invested, 2),
+        "added_this_month": round(added_this_month, 2),
+        "system_active": sys_count > 0,
+        "system_actions_14d": sys_count,
+        "generated_at": now.isoformat(),
+    }
+
+
 # Include the router in the main app (MUST be at the end after all routes defined)
 fastapi_app.include_router(api_router)
 

@@ -30,20 +30,23 @@ export default function ClientHome() {
   const [operator, setOperator] = useState<any>(null);
   const [costs, setCosts] = useState<any>(null);
   const [attention, setAttention] = useState<any>(null);
+  const [owner, setOwner] = useState<any>(null);
   const [refreshing, setRefreshing] = useState(false);
   const router = useRouter();
 
   // ARCHITECTURE.md: one page → N independent reads, no merging.
   const load = async () => {
     try {
-      const [op, co, at] = await Promise.all([
+      const [op, co, at, ow] = await Promise.all([
         api.get('/client/operator'),
         api.get('/client/costs'),
         api.get('/client/attention').catch(() => ({ data: null })),
+        api.get('/client/owner-summary').catch(() => ({ data: null })),
       ]);
       setOperator(op.data);
       setCosts(co.data);
       setAttention(at.data);
+      setOwner(ow.data);
     } catch {
       // silent — auth errors bubble via interceptor
     }
@@ -94,7 +97,54 @@ export default function ClientHome() {
   return (
     <ScrollView style={s.container} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={async () => { setRefreshing(true); await load(); setRefreshing(false); }} tintColor={T.primary} />}>
       <View testID="client-dashboard" style={s.content}>
-        <Text style={s.title}>Dashboard</Text>
+        <View style={s.titleRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={s.title}>Dashboard</Text>
+            <Text style={s.subtitle}>Owner · Operator assisted</Text>
+          </View>
+          <TouchableOpacity
+            testID="open-pricing-plans"
+            style={s.planChip}
+            onPress={() => router.push('/client/billing/plans' as any)}
+            activeOpacity={0.85}
+          >
+            <Ionicons name="diamond-outline" size={13} color={T.primary} />
+            <Text style={s.planChipText}>Plans</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Productization — frame the user as Owner of a managed product. */}
+        {owner && owner.products_count > 0 && (
+          <TouchableOpacity
+            testID="owner-summary"
+            style={s.owner}
+            onPress={() => router.push('/client/billing/plans' as any)}
+            activeOpacity={0.85}
+          >
+            <Text style={s.ownerLabel}>YOU ARE RUNNING</Text>
+            <Text style={s.ownerHeadline}>
+              {owner.products_count} {owner.products_count === 1 ? 'product' : 'products'}
+              {owner.invested > 0 ? ` · $${owner.invested.toLocaleString('en-US')} invested` : ''}
+            </Text>
+            {owner.added_this_month > 0 && (
+              <Text style={s.ownerAdded}>
+                +${owner.added_this_month.toLocaleString('en-US')} added this month
+              </Text>
+            )}
+            <View style={s.ownerFooter}>
+              <Ionicons
+                name={owner.system_active ? 'hardware-chip' : 'pause-circle-outline'}
+                size={14}
+                color={owner.system_active ? T.primary : T.textMuted}
+              />
+              <Text style={[s.ownerSystem, !owner.system_active && { color: T.textMuted }]}>
+                {owner.system_active
+                  ? 'System is actively managing everything'
+                  : 'System idle — no recent actions'}
+              </Text>
+            </View>
+          </TouchableOpacity>
+        )}
 
         {/* Retention: "why open the app right now". Silent when total == 0. */}
         {attention && attention.total > 0 && (() => {
@@ -220,7 +270,33 @@ export default function ClientHome() {
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: T.bg },
   content: { padding: T.md },
-  title: { color: T.text, fontSize: T.h1, fontWeight: '800', marginBottom: T.lg },
+  title: { color: T.text, fontSize: T.h1, fontWeight: '800' },
+  subtitle: { color: T.textMuted, fontSize: T.tiny, marginTop: 2, fontWeight: '600', letterSpacing: 0.5 },
+
+  /* PRODUCTIZATION — top-row plan chip + Owner Summary */
+  titleRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: T.lg },
+  planChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: T.surface1,
+    borderWidth: 1, borderColor: T.primary + '4D',
+    borderRadius: 999,
+    paddingHorizontal: 10, paddingVertical: 6,
+    marginTop: 4,
+  },
+  planChipText: { color: T.primary, fontSize: T.tiny, fontWeight: '800', letterSpacing: 0.5 },
+
+  owner: {
+    backgroundColor: T.surface1,
+    borderWidth: 1, borderColor: T.primary + '33',
+    borderRadius: T.radius,
+    padding: T.md,
+    marginBottom: T.lg,
+  },
+  ownerLabel: { color: T.primary, fontSize: 10, fontWeight: '900', letterSpacing: 1.5 },
+  ownerHeadline: { color: T.text, fontSize: T.h3, fontWeight: '800', marginTop: 6 },
+  ownerAdded: { color: T.success, fontSize: T.small, fontWeight: '700', marginTop: 4 },
+  ownerFooter: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: T.sm, paddingTop: T.sm, borderTopWidth: 1, borderTopColor: T.border },
+  ownerSystem: { color: T.text, fontSize: T.tiny, fontWeight: '600', flex: 1 },
   section: { marginBottom: T.lg },
   sectionTitle: { color: T.textMuted, fontSize: T.small, textTransform: 'uppercase', letterSpacing: 2, marginBottom: T.sm },
   actionCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: T.surface1, borderRadius: T.radiusSm, padding: T.md, marginBottom: T.sm, borderLeftWidth: 3, borderWidth: 1, borderColor: T.border, gap: T.md },
