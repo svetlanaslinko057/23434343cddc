@@ -59,6 +59,25 @@ Workspace (modules, review, payout) → Activity feed → Push notifications
 | Mobile workspace UI     | `frontend/app/workspace/[id].tsx`             |
 | Web admin login         | `web/src/pages/ClientAuthPage.js`             |
 
+## Retention Engine v1 — Return Loop (shipped)
+**Why open the app right now.** Three bucket counter that surfaces only when at
+least one item demands the client's attention.
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /api/client/attention` | `{pending_approvals, pending_payments, blocked_modules, total}` from raw collections — no aggregation |
+
+Push triggers (3 — fired automatically by existing pipeline):
+1. **Module ready for review** → `module_motion._emit_notification(type_="review_required")` already wired on `in_progress → review` transition.
+2. **Payment required to continue development** → `_emit_notification(type_="payment_required")` newly hooked into `POST /api/billing/invoices` and the deliverable-publish path.
+3. **Project waiting for your decision** → covered by the same `review_required` push (project stays in review until client acts).
+
+UI surfaces:
+- `frontend/app/client/home.tsx` — top-of-Home "Your product needs attention" CTA. Hidden when `total == 0`. Clicks straight into the first project's screen.
+- `frontend/app/client/projects/[id].tsx` — passive pressure on module cards:
+  - status=review → "Waiting for your approval · $X is ready to be delivered"
+  - invoice pending → "Blocked by payment · pay to continue development" + Pay button.
+
 ## Next Steps (from user's product roadmap)
 1. **Realtime activity** — wire mobile `frontend/src/realtime.ts` to live socket.io,
    replace polling in `/workspace` with live updates for approve/modules/money.

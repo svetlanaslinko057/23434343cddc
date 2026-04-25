@@ -435,27 +435,37 @@ export default function ClientProjectScreen() {
                 <View style={[s.progressFill, { width: `${Math.min(100, m.progress_pct)}%`, backgroundColor: invIsPaid ? '#22c55e' : tone }]} />
               </View>
 
-              {/* State-specific footer: review without invoice / pending invoice (Pay now) / paid (Done) */}
+              {/* Passive pressure: state-specific footer that nudges without nagging. */}
               {showApprove && (
-                <View style={s.moduleHint}>
+                <View style={s.moduleHint} testID={`pressure-review-${m.module_id}`}>
                   <Ionicons name="alert-circle" size={14} color="#f59e0b" />
-                  <Text style={s.moduleHintText}>Awaiting review — see Action required above</Text>
+                  <Text style={s.moduleHintText}>
+                    Waiting for your approval{m.price ? ` · $${fmt(m.price)} is ready to be delivered` : ''}
+                  </Text>
                 </View>
               )}
 
               {invIsPending && (
-                <TouchableOpacity
-                  testID={`pay-${inv!.invoice_id}`}
-                  style={[s.payBtn, paying === inv!.invoice_id && { opacity: 0.6 }]}
-                  onPress={() => payInvoice(inv!)}
-                  disabled={paying === inv!.invoice_id}
-                  activeOpacity={0.85}
-                >
-                  <Ionicons name="card" size={16} color={T.bg} />
-                  <Text style={s.payBtnText}>
-                    {paying === inv!.invoice_id ? 'Processing…' : `Pay now · $${fmt(inv!.amount)}`}
-                  </Text>
-                </TouchableOpacity>
+                <>
+                  <View style={s.moduleHint} testID={`pressure-payment-${m.module_id}`}>
+                    <Ionicons name="lock-closed" size={14} color={T.danger} />
+                    <Text style={[s.moduleHintText, { color: T.danger }]}>
+                      Blocked by payment · pay to continue development
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    testID={`pay-${inv!.invoice_id}`}
+                    style={[s.payBtn, paying === inv!.invoice_id && { opacity: 0.6 }]}
+                    onPress={() => payInvoice(inv!)}
+                    disabled={paying === inv!.invoice_id}
+                    activeOpacity={0.85}
+                  >
+                    <Ionicons name="card" size={16} color={T.bg} />
+                    <Text style={s.payBtnText}>
+                      {paying === inv!.invoice_id ? 'Processing…' : `Pay now · $${fmt(inv!.amount)}`}
+                    </Text>
+                  </TouchableOpacity>
+                </>
               )}
 
               {/* Contextual upsell — surface 2FA right under a finished auth module. */}

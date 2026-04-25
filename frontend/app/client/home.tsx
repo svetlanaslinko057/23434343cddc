@@ -29,18 +29,21 @@ const COST_TO_SEVERITY: Record<string, string> = {
 export default function ClientHome() {
   const [operator, setOperator] = useState<any>(null);
   const [costs, setCosts] = useState<any>(null);
+  const [attention, setAttention] = useState<any>(null);
   const [refreshing, setRefreshing] = useState(false);
   const router = useRouter();
 
   // ARCHITECTURE.md: one page → N independent reads, no merging.
   const load = async () => {
     try {
-      const [op, co] = await Promise.all([
+      const [op, co, at] = await Promise.all([
         api.get('/client/operator'),
         api.get('/client/costs'),
+        api.get('/client/attention').catch(() => ({ data: null })),
       ]);
       setOperator(op.data);
       setCosts(co.data);
+      setAttention(at.data);
     } catch {
       // silent — auth errors bubble via interceptor
     }
@@ -92,6 +95,46 @@ export default function ClientHome() {
     <ScrollView style={s.container} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={async () => { setRefreshing(true); await load(); setRefreshing(false); }} tintColor={T.primary} />}>
       <View testID="client-dashboard" style={s.content}>
         <Text style={s.title}>Dashboard</Text>
+
+        {/* Retention: "why open the app right now". Silent when total == 0. */}
+        {attention && attention.total > 0 && (() => {
+          const parts: string[] = [];
+          if (attention.pending_approvals > 0) {
+            parts.push(`${attention.pending_approvals} approval${attention.pending_approvals > 1 ? 's' : ''}`);
+          }
+          if (attention.pending_payments > 0) {
+            parts.push(`${attention.pending_payments} payment${attention.pending_payments > 1 ? 's' : ''}`);
+          }
+          if (attention.blocked_modules > 0) {
+            parts.push(`${attention.blocked_modules} blocked`);
+          }
+          const firstProject = (operator?.projects || [])[0];
+          const goReview = () => {
+            if (firstProject?.project_id) {
+              router.push(`/client/projects/${firstProject.project_id}` as any);
+            }
+          };
+          return (
+            <TouchableOpacity
+              testID="attention-block"
+              style={s.attention}
+              activeOpacity={0.85}
+              onPress={goReview}
+            >
+              <View style={s.attentionIcon}>
+                <Ionicons name="alert-circle" size={20} color={T.risk} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={s.attentionTitle}>Your product needs attention</Text>
+                <Text style={s.attentionSub}>{parts.join(' · ')} require your action</Text>
+              </View>
+              <View style={s.attentionCta}>
+                <Text style={s.attentionCtaText}>Review now</Text>
+                <Ionicons name="chevron-forward" size={14} color={T.bg} />
+              </View>
+            </TouchableOpacity>
+          );
+        })()}
 
         {/* Decision Hub — pending_approval across all projects, silent when empty */}
         <DecisionHub />
@@ -182,6 +225,30 @@ const s = StyleSheet.create({
   financeLabel: { color: T.textMuted, fontSize: T.tiny, marginTop: 2 },
   empty: { color: T.textMuted, textAlign: 'center', padding: T.lg },
   newProjectCta: { backgroundColor: T.primary, borderRadius: T.radius, padding: T.md, marginBottom: T.lg },
+
+  /* RETENTION ENGINE — "needs attention" block (top of Home) */
+  attention: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    backgroundColor: T.risk + '14',
+    borderWidth: 1, borderColor: T.risk + '4D',
+    borderRadius: T.radius,
+    padding: T.md,
+    marginBottom: T.lg,
+  },
+  attentionIcon: {
+    width: 38, height: 38, borderRadius: 10,
+    backgroundColor: T.risk + '22',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  attentionTitle: { color: T.text, fontSize: T.body, fontWeight: '800' },
+  attentionSub: { color: T.textMuted, fontSize: T.tiny, marginTop: 2 },
+  attentionCta: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: T.risk,
+    paddingHorizontal: 12, paddingVertical: 8,
+    borderRadius: T.radiusSm,
+  },
+  attentionCtaText: { color: T.bg, fontSize: T.small, fontWeight: '800' },
   newProjectContent: { flexDirection: 'row', alignItems: 'center', gap: T.md },
   newProjectIcon: { fontSize: 28 },
   newProjectTitle: { color: T.bg, fontSize: T.body + 1, fontWeight: '800' },

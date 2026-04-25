@@ -4466,6 +4466,21 @@ async def publish_deliverable_for_payment(
         "price": payload.price,
         "invoice_id": invoice_id
     })
+    # Retention: push so the client comes back to pay.
+    try:
+        from module_motion import _emit_notification as _push
+        await _push(
+            db,
+            user_id=project.get("client_id"),
+            type_="payment_required",
+            severity="warning",
+            title="Payment required to continue development",
+            subtitle=f"{deliverable['title']} · ${payload.price:,.0f}",
+            project_id=project.get("project_id") or project.get("id"),
+            module_id=invoice_id,
+        )
+    except Exception:
+        pass
     
     logger.info(f"DELIVERABLE {deliverable_id} published for payment: ${payload.price}")
     
@@ -9478,6 +9493,21 @@ async def create_invoice(
         "title": title,
         "amount": amount,
     })
+    # Retention: push so the client comes back to pay.
+    try:
+        from module_motion import _emit_notification as _push
+        await _push(
+            db,
+            user_id=client_id,
+            type_="payment_required",
+            severity="warning",
+            title="Payment required to continue development",
+            subtitle=f"{title} · ${amount:,.0f}",
+            project_id=project_id,
+            module_id=invoice.get("invoice_id"),
+        )
+    except Exception:
+        pass
     
     invoice.pop("_id", None)
     logger.info(f"INVOICE CREATED: {invoice['invoice_id']} for ${amount}")
@@ -19657,6 +19687,60 @@ async def add_expansion_module(
         pass
 
     return {"ok": True, "module": module}
+
+
+# ============================================================================
+# RETENTION ENGINE v1 — Return Loop
+# ----------------------------------------------------------------------------
+# `/client/attention` — single counter-style endpoint that tells the Home screen
+# "why open the app right now". Three buckets:
+#   • pending_approvals — deliverables waiting for client approve
+#   • pending_payments  — invoices the client must pay to unblock work
+#   • blocked_modules   — modules system-paused / waiting on the client
+# Sum=0 → home block stays silent. No aggregation in the UI.
+# ============================================================================
+
+@api_router.get("/client/attention")
+async def client_attention(user: User = Depends(get_current_user)):
+    """How many things on this client's plate require their action *right now*.
+
+    The numbers come straight from collections — no derivation, no client-side
+    math. UI hides the block when total == 0.
+    """
+    # Projects this client owns.
+    pids = [
+        p["project_id"]
+        async for p in db.projects.find(
+            {"client_id": user.user_id}, {"_id": 0, "project_id": 1}
+        )
+    ]
+    if not pids:
+        return {
+            "pending_approvals": 0,
+            "pending_payments": 0,
+            "blocked_modules": 0,
+            "total": 0,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    pending_approvals = await db.deliverables.count_documents(
+        {"project_id": {"$in": pids}, "status": "pending_approval"}
+    )
+    pending_payments = await db.invoices.count_documents(
+        {"client_id": user.user_id, "status": {"$in": ["pending_payment", "overdue"]}}
+    )
+    blocked_modules = await db.modules.count_documents(
+        {"project_id": {"$in": pids}, "status": {"$in": ["paused", "blocked"]}}
+    )
+
+    total = pending_approvals + pending_payments + blocked_modules
+    return {
+        "pending_approvals": pending_approvals,
+        "pending_payments": pending_payments,
+        "blocked_modules": blocked_modules,
+        "total": total,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 # Include the router in the main app (MUST be at the end after all routes defined)
