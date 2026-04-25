@@ -193,6 +193,22 @@ def init_router(db, get_current_user_dep):
         # 7. Sort modules by priority (system-paused → over-budget → warning → active → …)
         enriched_modules.sort(key=_module_sort_key)
 
+        # 8. Latest system action — the operator/guardian audit trail.
+        # Surfacing the most recent line on the hero turns the project from
+        # "managed by you" to "managed by the system, you supervise".
+        last_action = await db.auto_actions.find_one(
+            {"project_id": project_id},
+            {"_id": 0, "type": 1, "impact": 1, "reason": 1, "created_at": 1},
+            sort=[("created_at", -1)],
+        )
+        system_action = None
+        if last_action:
+            system_action = {
+                "label": last_action.get("impact") or last_action.get("reason") or "System acted",
+                "type": last_action.get("type"),
+                "at": last_action.get("created_at"),
+            }
+
         return {
             "project": {
                 "project_id": project_id,
@@ -215,6 +231,7 @@ def init_router(db, get_current_user_dep):
             "status_label": _status_label(risk),
             "cause": _cause(risk, paused_sys, over_count, warn_count),
             "explanation": _explain(risk, over_count, warn_count),
+            "system_action": system_action,
             "modules": enriched_modules,
             "generated_at": datetime.now(timezone.utc).isoformat(),
         }

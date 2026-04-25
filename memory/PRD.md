@@ -78,6 +78,28 @@ UI surfaces:
   - status=review → "Waiting for your approval · $X is ready to be delivered"
   - invoice pending → "Blocked by payment · pay to continue development" + Pay button.
 
+## Operator Engine v1 — Autonomous Control (shipped)
+**System manages the project, client supervises.** Surfaces the existing
+`auto_actions` audit trail (guardian + operator) in client-facing surfaces so
+the autonomous control layer feels like a teammate rather than a hidden process.
+
+| Surface | What it does |
+|---------|--------------|
+| `client_workspace.py` → `system_action` field | Latest `auto_actions` entry for the project (impact text + type + timestamp). Read-only projection — no new business logic. |
+| `/api/activity/live` extended | Pulls recent `auto_actions` for the user's projects and merges them into the events feed with a purple dot and `kind: "system"`. |
+| `home.tsx` "Operator Trust" banner | Silent unless `attention.total === 0` AND user has at least one project. "Your project is being actively managed · System is on it · no action required right now." Opposite of the Retention attention block — they never appear together. |
+| `[id].tsx` hero "System: ..." chip | Shows the latest system action right under the project explanation. Visible only when there is one. |
+
+Rule-based auto-actions feeding this layer (already shipped earlier):
+- `auto_pause` — module over budget by 20%+ (auto_guardian R2)
+- `auto_rebalance` — high-confidence rebalance suggestion (R1)
+- `auto_project_pause` — project blocked, paused remaining modules (R3)
+- `qa_bottleneck` / `payment_risk` / `idle_developer` / `invite_top_devs` (operator_engine A–E)
+
+Visibility filter: only `impact` (the human-friendly outcome line) is surfaced
+client-side. Internal fields like `confidence_breakdown` and `payload` stay
+admin-only — UI shows the *effect*, not the mechanics.
+
 ## Next Steps (from user's product roadmap)
 1. **Realtime activity** — wire mobile `frontend/src/realtime.ts` to live socket.io,
    replace polling in `/workspace` with live updates for approve/modules/money.

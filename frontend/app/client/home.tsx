@@ -136,6 +136,19 @@ export default function ClientHome() {
           );
         })()}
 
+        {/* Operator Trust — opposite of attention: "system has it, no action required". */}
+        {attention && attention.total === 0 && (operator?.projects || []).length > 0 && (
+          <View testID="operator-trust-block" style={s.trust}>
+            <View style={s.trustIcon}>
+              <Ionicons name="hardware-chip" size={20} color={T.primary} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={s.trustTitle}>Your project is being actively managed</Text>
+              <Text style={s.trustSub}>System is on it · no action required right now</Text>
+            </View>
+          </View>
+        )}
+
         {/* Decision Hub — pending_approval across all projects, silent when empty */}
         <DecisionHub />
 
@@ -249,6 +262,23 @@ const s = StyleSheet.create({
     borderRadius: T.radiusSm,
   },
   attentionCtaText: { color: T.bg, fontSize: T.small, fontWeight: '800' },
+
+  /* OPERATOR LAYER — trust banner (silent unless attention.total === 0) */
+  trust: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    backgroundColor: T.surface1,
+    borderWidth: 1, borderColor: T.primary + '33',
+    borderRadius: T.radius,
+    padding: T.md,
+    marginBottom: T.lg,
+  },
+  trustIcon: {
+    width: 38, height: 38, borderRadius: 10,
+    backgroundColor: T.primary + '14',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  trustTitle: { color: T.text, fontSize: T.body, fontWeight: '800' },
+  trustSub: { color: T.textMuted, fontSize: T.tiny, marginTop: 2 },
   newProjectContent: { flexDirection: 'row', alignItems: 'center', gap: T.md },
   newProjectIcon: { fontSize: 28 },
   newProjectTitle: { color: T.bg, fontSize: T.body + 1, fontWeight: '800' },

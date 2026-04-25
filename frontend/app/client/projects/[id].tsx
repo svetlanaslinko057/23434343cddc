@@ -51,7 +51,18 @@ type Workspace = {
   status: 'healthy' | 'watch' | 'at_risk' | 'blocked';
   status_label: string;
   explanation: string;
+  system_action?: { label: string; type: string; at: string } | null;
   modules: Module[];
+};
+
+type ActivityEvent = {
+  at: string;
+  module_title: string;
+  project_title: string;
+  project_id: string;
+  verb: string;
+  dot: 'green' | 'yellow' | 'blue' | 'purple';
+  kind?: 'system';
 };
 
 type Deliverable = {
@@ -73,15 +84,6 @@ type Invoice = {
   status: string; // paid | pending_payment | draft
   title?: string;
   paid_at?: string;
-};
-
-type ActivityEvent = {
-  at: string;
-  module_title: string;
-  project_title: string;
-  project_id: string;
-  verb: string;
-  dot: 'green' | 'yellow' | 'blue';
 };
 
 const POLL_MS = 8000;
@@ -122,6 +124,7 @@ const DOT_COLOR: Record<ActivityEvent['dot'], string> = {
   green:  '#22c55e',
   yellow: '#f59e0b',
   blue:   '#60a5fa',
+  purple: '#a855f7',
 };
 
 export default function ClientProjectScreen() {
@@ -308,6 +311,16 @@ export default function ClientProjectScreen() {
           </View>
           <Text style={s.heroTitle} numberOfLines={2}>{ws.project.project_title}</Text>
           <Text style={s.heroSub} numberOfLines={2}>{ws.explanation}</Text>
+
+          {/* Operator Layer — make the system feel like a teammate. */}
+          {ws.system_action && (
+            <View style={s.heroSysAction} testID="hero-system-action">
+              <Ionicons name="hardware-chip" size={13} color={T.primary} />
+              <Text style={s.heroSysActionText} numberOfLines={2}>
+                System: {ws.system_action.label}
+              </Text>
+            </View>
+          )}
 
           <View style={s.heroRow}>
             <View style={s.heroCell}>
@@ -594,6 +607,20 @@ const s = StyleSheet.create({
   heroBadgeText: { fontSize: 10, fontWeight: '800', letterSpacing: 1 },
   heroTitle: { color: T.text, fontSize: T.h2, fontWeight: '800', marginTop: 12 },
   heroSub: { color: T.textMuted, fontSize: T.small, marginTop: 6 },
+
+  /* OPERATOR LAYER — system-action line on the project hero */
+  heroSysAction: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: T.primary + '12',
+    borderWidth: 1, borderColor: T.primary + '33',
+    borderRadius: T.radiusSm,
+    paddingHorizontal: 10, paddingVertical: 7,
+    marginTop: T.sm,
+    alignSelf: 'flex-start',
+    maxWidth: '100%',
+  },
+  heroSysActionText: { color: T.text, fontSize: T.tiny, flexShrink: 1, fontWeight: '600' },
+
   heroRow: { flexDirection: 'row', gap: T.md, marginTop: T.lg },
   heroCell: { flex: 1 },
   heroVal: { color: T.text, fontSize: T.h3, fontWeight: '800' },

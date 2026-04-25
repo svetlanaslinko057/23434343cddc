@@ -18455,7 +18455,30 @@ async def get_live_activity(user: User = Depends(get_current_user)):
                 "dot": dot,
             })
 
-    events.sort(key=lambda e: e["at"], reverse=True)
+    # System events — auto_actions written by guardian/operator. Surfaces
+    # the autonomous control layer in the same feed module transitions live in,
+    # so the user sees the system "as a teammate", not as a hidden process.
+    sys_actions = [a async for a in db.auto_actions.find(
+        {"project_id": {"$in": pids}},
+        {"_id": 0, "type": 1, "impact": 1, "reason": 1, "label": 1, "created_at": 1, "project_id": 1},
+        sort=[("created_at", -1)],
+        limit=30,
+    )]
+    for a in sys_actions:
+        impact = a.get("impact") or a.get("label") or a.get("reason")
+        if not impact:
+            continue
+        events.append({
+            "at": a.get("created_at"),
+            "module_title": impact,
+            "project_title": titles.get(a.get("project_id"), ""),
+            "project_id": a.get("project_id"),
+            "verb": "by system",
+            "dot": "purple",
+            "kind": "system",
+        })
+
+    events.sort(key=lambda e: e["at"] or "", reverse=True)
     return {"events": events[:50]}
 
 
