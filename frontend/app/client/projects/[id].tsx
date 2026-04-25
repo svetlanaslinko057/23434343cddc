@@ -35,6 +35,13 @@ type Module = {
   developer_name?: string;
 };
 
+type CatalogItem = {
+  slug: string;
+  title: string;
+  description: string;
+  price: number;
+};
+
 type Workspace = {
   project: { project_id: string; project_title: string };
   summary: {
@@ -124,19 +131,22 @@ export default function ClientProjectScreen() {
   const [deliverables, setDeliverables] = useState<Deliverable[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [events, setEvents] = useState<ActivityEvent[]>([]);
+  const [catalog, setCatalog] = useState<CatalogItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [acting, setActing] = useState<string | null>(null);
   const [paying, setPaying] = useState<string | null>(null);
+  const [addingSlug, setAddingSlug] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!id) return;
     try {
-      const [w, d, a, inv] = await Promise.all([
+      const [w, d, a, inv, cat] = await Promise.all([
         api.get(`/client/project/${id}/workspace`),
         api.get(`/client/projects/${id}/deliverables`).catch(() => ({ data: [] as Deliverable[] })),
         api.get('/activity/live').catch(() => ({ data: { events: [] } })),
         api.get('/client/invoices').catch(() => ({ data: [] as Invoice[] })),
+        api.get('/client/modules/catalog').catch(() => ({ data: { items: [] as CatalogItem[] } })),
       ]);
       setWs(w.data);
       const dList: Deliverable[] = Array.isArray(d.data) ? d.data : (d.data?.deliverables || []);
@@ -145,6 +155,7 @@ export default function ClientProjectScreen() {
       setEvents(allEv.filter(e => e.project_id === id).slice(0, 8));
       const invList: Invoice[] = Array.isArray(inv.data) ? inv.data : [];
       setInvoices(invList.filter(i => i.module_id));
+      setCatalog(cat.data?.items || []);
     } catch {
       /* silent */
     } finally {
@@ -199,6 +210,37 @@ export default function ClientProjectScreen() {
       setPaying(null);
     }
   };
+
+  // Expansion Engine — quick add from inline upsells (catalog screen does the same).
+  const addModule = async (slug: string) => {
+    if (!id) return;
+    setAddingSlug(slug);
+    try {
+      await api.post(`/client/projects/${id}/modules/add`, { slug });
+      await load();
+    } catch (e: any) {
+      Alert.alert('Error', e.response?.data?.detail || 'Could not add module');
+    } finally {
+      setAddingSlug(null);
+    }
+  };
+
+  // Pick the single most relevant upsell for this project, or null.
+  // Hidden when the recommended module is already in the project (any status).
+  const upsell = useMemo<CatalogItem | null>(() => {
+    if (!ws || catalog.length === 0) return null;
+    const titles = (ws.modules || []).map(m => (m.module_title || '').toLowerCase());
+    const has = (q: string) => titles.some(t => t.includes(q));
+    const hasAuth     = has('auth');
+    const hasTwoFa    = has('two-factor') || has('2fa');
+    const hasPay      = has('payment');
+    const hasAnalytic = has('analytic');
+    const bySlug = (s: string) => catalog.find(c => c.slug === s) || null;
+    if (hasAuth && !hasTwoFa) return bySlug('2fa');
+    if (!hasPay)              return bySlug('payments');
+    if (!hasAnalytic)         return bySlug('analytics');
+    return null;
+  }, [ws, catalog]);
 
   // Index invoices by module — there's at most one open invoice per module.
   // Newest first wins (covers re-issues).
@@ -328,6 +370,27 @@ export default function ClientProjectScreen() {
                 </View>
               </View>
             ))}
+
+            {/* Inline upsell — most conversionful spot: right next to a decision. */}
+            {upsell && (
+              <View style={s.upsell} testID="decision-upsell">
+                <Text style={s.upsellLabel}>RECOMMENDED UPGRADE</Text>
+                <Text style={s.upsellTitle}>{upsell.title} <Text style={s.upsellPrice}>+${fmt(upsell.price)}</Text></Text>
+                <Text style={s.upsellDesc} numberOfLines={2}>{upsell.description}</Text>
+                <TouchableOpacity
+                  testID={`decision-upsell-add-${upsell.slug}`}
+                  style={[s.upsellBtn, addingSlug === upsell.slug && { opacity: 0.6 }]}
+                  onPress={() => addModule(upsell.slug)}
+                  disabled={!!addingSlug}
+                  activeOpacity={0.85}
+                >
+                  <Ionicons name="add-circle" size={16} color={T.bg} />
+                  <Text style={s.upsellBtnText}>
+                    {addingSlug === upsell.slug ? 'Adding…' : 'Add module'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
           </View>
         )}
 
@@ -394,9 +457,61 @@ export default function ClientProjectScreen() {
                   </Text>
                 </TouchableOpacity>
               )}
+
+              {/* Contextual upsell — surface 2FA right under a finished auth module. */}
+              {(() => {
+                const t = (m.module_title || '').toLowerCase();
+                const isAuth = t.includes('auth');
+                const isDone = m.status === 'done' || m.status === 'completed';
+                const twoFa = catalog.find(c => c.slug === '2fa');
+                const alreadyHas = (ws?.modules || []).some(x =>
+                  (x.module_title || '').toLowerCase().includes('two-factor') ||
+                  (x.module_title || '').toLowerCase().includes('2fa'));
+                if (!isAuth || !isDone || !twoFa || alreadyHas) return null;
+                return (
+                  <View style={s.ctxUpsell} testID={`ctx-upsell-${m.module_id}`}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={s.ctxUpsellLabel}>UPGRADE AVAILABLE</Text>
+                      <Text style={s.ctxUpsellText}>Add 2FA for better security · +${fmt(twoFa.price)}</Text>
+                    </View>
+                    <TouchableOpacity
+                      testID={`ctx-upsell-add-${m.module_id}`}
+                      style={[s.ctxUpsellBtn, addingSlug === '2fa' && { opacity: 0.6 }]}
+                      onPress={() => addModule('2fa')}
+                      disabled={!!addingSlug}
+                      activeOpacity={0.85}
+                    >
+                      <Text style={s.ctxUpsellBtnText}>{addingSlug === '2fa' ? '…' : 'Add'}</Text>
+                    </TouchableOpacity>
+                  </View>
+                );
+              })()}
             </View>
           );
         })}
+
+        {/* ─── 4b. ADD MODULE ENTRY ─── */}
+        <TouchableOpacity
+          testID="open-module-catalog"
+          style={s.addBlock}
+          onPress={() => router.push({
+            pathname: '/client/modules/catalog',
+            params: { projectId: id, projectTitle: ws.project.project_title },
+          } as any)}
+          activeOpacity={0.85}
+        >
+          <View style={s.addBlockIcon}>
+            <Ionicons name="add" size={22} color={T.primary} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={s.addBlockTitle}>Improve your product</Text>
+            <Text style={s.addBlockSub}>Add new capabilities — auth, payments, analytics</Text>
+          </View>
+          <View style={s.addBlockCta}>
+            <Text style={s.addBlockCtaText}>Browse</Text>
+            <Ionicons name="chevron-forward" size={14} color={T.bg} />
+          </View>
+        </TouchableOpacity>
 
         {/* ─── 5. INLINE ACTIVITY ─── */}
         <Text style={[s.sectionLabel, { marginTop: T.lg }]}>LIVE ACTIVITY</Text>
@@ -560,4 +675,70 @@ const s = StyleSheet.create({
   evDot: { width: 7, height: 7, borderRadius: 4, marginTop: 6 },
   evLine: { color: T.text, fontSize: T.small },
   evMeta: { color: T.textMuted, fontSize: 10, marginTop: 2 },
+
+  /* EXPANSION ENGINE — inline upsell inside Decision block */
+  upsell: {
+    backgroundColor: T.primary + '14',
+    borderWidth: 1, borderColor: T.primary + '4D',
+    borderRadius: T.radiusSm,
+    padding: T.md,
+    marginTop: T.sm,
+  },
+  upsellLabel: { color: T.primary, fontSize: 10, fontWeight: '800', letterSpacing: 1.5 },
+  upsellTitle: { color: T.text, fontSize: T.body, fontWeight: '800', marginTop: 4 },
+  upsellPrice: { color: T.primary, fontWeight: '800' },
+  upsellDesc: { color: T.textMuted, fontSize: T.small, marginTop: 4, lineHeight: 18 },
+  upsellBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    backgroundColor: T.primary,
+    paddingVertical: 9, paddingHorizontal: 14,
+    borderRadius: T.radiusSm,
+    alignSelf: 'flex-start',
+    marginTop: T.sm,
+  },
+  upsellBtnText: { color: T.bg, fontSize: T.small, fontWeight: '800' },
+
+  /* EXPANSION ENGINE — contextual upsell on a finished module */
+  ctxUpsell: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    backgroundColor: T.primary + '0F',
+    borderWidth: 1, borderColor: T.primary + '33',
+    borderRadius: T.radiusSm,
+    padding: T.sm,
+    marginTop: T.sm,
+  },
+  ctxUpsellLabel: { color: T.primary, fontSize: 9, fontWeight: '800', letterSpacing: 1.2 },
+  ctxUpsellText: { color: T.text, fontSize: T.small, fontWeight: '600', marginTop: 2 },
+  ctxUpsellBtn: {
+    backgroundColor: T.primary,
+    paddingHorizontal: 14, paddingVertical: 7,
+    borderRadius: T.radiusSm,
+  },
+  ctxUpsellBtnText: { color: T.bg, fontSize: T.small, fontWeight: '800' },
+
+  /* EXPANSION ENGINE — Add Module entry block */
+  addBlock: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    backgroundColor: T.surface1,
+    borderWidth: 1, borderColor: T.primary + '33',
+    borderStyle: 'dashed' as const,
+    borderRadius: T.radius,
+    padding: T.md,
+    marginTop: T.sm,
+    marginBottom: T.md,
+  },
+  addBlockIcon: {
+    width: 40, height: 40, borderRadius: 10,
+    backgroundColor: T.primary + '14',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  addBlockTitle: { color: T.text, fontSize: T.body, fontWeight: '800' },
+  addBlockSub: { color: T.textMuted, fontSize: T.tiny, marginTop: 2 },
+  addBlockCta: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: T.primary,
+    paddingHorizontal: 12, paddingVertical: 7,
+    borderRadius: T.radiusSm,
+  },
+  addBlockCtaText: { color: T.bg, fontSize: T.small, fontWeight: '800' },
 });

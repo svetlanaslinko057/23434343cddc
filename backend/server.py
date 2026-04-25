@@ -18411,6 +18411,7 @@ async def get_live_activity(user: User = Depends(get_current_user)):
             ("completed_at", "completed", "green"),
             ("review_at",    "moved to review", "yellow"),
             ("started_at",   "started", "blue"),
+            ("added_at",     "added", "blue"),
         ):
             ts = m.get(field)
             if not ts:
@@ -19529,6 +19530,133 @@ async def get_developer_quality_score(
         
         "events": dev_events
     }
+
+
+# ============================================================================
+# EXPANSION ENGINE v1 — Add-Module Catalog
+# ----------------------------------------------------------------------------
+# Lets a client extend a live project by adding pre-defined modules from a
+# small curated catalog. The added module enters the existing pipeline at
+# status="pending" — no new flow, no upfront invoice. Billing happens at the
+# normal Approve→Invoice→Pay step like every other module.
+# ============================================================================
+
+EXPANSION_CATALOG = {
+    "2fa": {
+        "slug": "2fa",
+        "title": "Two-Factor Authentication",
+        "description": "SMS / Authenticator-app 2FA — block account takeovers.",
+        "price": 400,
+        "estimated_hours": 14,
+        "template_type": "auth",
+    },
+    "payments": {
+        "slug": "payments",
+        "title": "Payments Integration",
+        "description": "Stripe checkout + webhooks — start collecting revenue.",
+        "price": 500,
+        "estimated_hours": 18,
+        "template_type": "payments",
+    },
+    "analytics": {
+        "slug": "analytics",
+        "title": "Analytics Dashboard",
+        "description": "Real-time charts + export — see how the product is used.",
+        "price": 600,
+        "estimated_hours": 16,
+        "template_type": "analytics",
+    },
+}
+
+
+@api_router.get("/client/modules/catalog")
+async def expansion_catalog(user: User = Depends(get_current_user)):
+    """Public-to-client catalog of expansion modules (3 fixed items)."""
+    return {"items": list(EXPANSION_CATALOG.values())}
+
+
+class AddExpansionModuleRequest(BaseModel):
+    slug: str  # one of EXPANSION_CATALOG keys
+
+
+@api_router.post("/client/projects/{project_id}/modules/add")
+async def add_expansion_module(
+    project_id: str,
+    body: AddExpansionModuleRequest,
+    user: User = Depends(get_current_user),
+):
+    """Add an expansion module to a live project.
+
+    The module enters the standard pipeline at status="pending". Pricing is
+    locked at insert-time (catalog is the single source of truth for now,
+    no dynamic pricing here). No invoice is created — the existing
+    Approve → Invoice → Pay flow handles billing like for every other module.
+    """
+    item = EXPANSION_CATALOG.get(body.slug)
+    if not item:
+        raise HTTPException(status_code=400, detail="Unknown module slug")
+
+    project = await db.projects.find_one({"project_id": project_id}, {"_id": 0})
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if user.role == "client" and project.get("client_id") != user.user_id:
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    module_id = f"mod_{uuid.uuid4().hex[:12]}"
+    module = {
+        "module_id": module_id,
+        "project_id": project_id,
+        "title": item["title"],
+        "description": item["description"],
+        "scope": [],
+        "deliverables": [],
+        "price": item["price"],
+        "base_price": item["price"],
+        "final_price": item["price"],
+        "pricing_breakdown": [{"label": "Base", "amount": item["price"]}],
+        "speed_tier": "standard",
+        "estimated_hours": item["estimated_hours"],
+        "template_type": item["template_type"],
+        "status": "pending",
+        "qa_status": "pending",
+        "revision_count": 0,
+        "max_revisions": 2,
+        "is_flagged": False,
+        "source": "expansion",
+        "expansion_slug": item["slug"],
+        "created_at": now_iso,
+        "added_at": now_iso,
+        "last_activity_at": now_iso,
+    }
+    await db.modules.insert_one(module)
+    module.pop("_id", None)
+
+    # Single shared bus — same place auto_guardian / operator / admin write.
+    await db.auto_actions.insert_one({
+        "action_id": f"act_{uuid.uuid4().hex[:12]}",
+        "type": "client_module_added",
+        "source": "client",
+        "project_id": project_id,
+        "module_id": module_id,
+        "actor_id": user.user_id,
+        "label": f"Client added {item['title']}",
+        "amount": item["price"],
+        "created_at": now_iso,
+    })
+
+    # Realtime nudge for any open project room.
+    try:
+        await realtime.emit_to_project(project_id, "module.added", {
+            "module_id": module_id,
+            "title": item["title"],
+            "price": item["price"],
+            "at": now_iso,
+        })
+    except Exception:
+        pass
+
+    return {"ok": True, "module": module}
 
 
 # Include the router in the main app (MUST be at the end after all routes defined)

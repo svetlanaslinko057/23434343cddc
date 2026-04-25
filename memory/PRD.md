@@ -66,3 +66,30 @@ Workspace (modules, review, payout) → Activity feed → Push notifications
 3. **Lead re-capture** — surface `/api/leads/by-email/pending` on `/client/home` ("We found your previous product plan → Continue building").
 4. **OTP polish** — autofocus ✓, auto-submit on 6 digits ✓, success animation, 0.5–1s "Unlocking your workspace…" bridge before redirect.
 5. **Build-mode copy** — reinforce "AI Build / AI + Engineering / Full Engineering" as a *decision* (speed/cost/reliability), not a feature trade-off.
+
+## Expansion Engine v1 — Revenue Growth Layer (shipped)
+**Second money engine on top of delivery loop.** Lets a client extend a live project
+with curated add-on modules. The added module enters the standard pipeline at
+`status="pending"` — no new flow, no upfront invoice. Billing happens at the
+existing Approve → Invoice → Pay step.
+
+| Endpoint | Purpose | Owner |
+|----------|---------|-------|
+| `GET  /api/client/modules/catalog` | 3 fixed catalog items (2FA $400 · Payments $500 · Analytics $600) | `server.py::expansion_catalog` |
+| `POST /api/client/projects/{id}/modules/add` | Insert module + write to `auto_actions` (single shared bus) + emit `module.added` realtime | `server.py::add_expansion_module` |
+| `GET  /api/activity/live` | Now also surfaces `added` events via `modules.added_at` | `server.py::get_live_activity` |
+
+Mobile UI surfaces:
+- `frontend/app/client/modules/catalog.tsx` — 3-card catalog screen
+- Project screen `[id].tsx` — three placements:
+  1. **Inline upsell** inside the Decision Engine block (highest conversion — next to Approve)
+  2. **Contextual upsell** under any finished `auth`-typed module ("Add 2FA +$400")
+  3. **"Improve your product" entry** — dashed-border block linking to the catalog
+
+Recommendation rule (rule-based, no ML):
+```
+if has(auth) and not has(2fa) → 2fa
+elif not has(payments)        → payments
+elif not has(analytics)       → analytics
+else                          → none
+```
